@@ -13,8 +13,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f6f8fb;
-  color: #14213d;
+  background: #f4f7fb;
+  color: #172033;
 }
 
 button,
@@ -30,4 +30,30 @@ textarea:focus-visible,
 select:focus-visible {
   outline: 3px solid rgba(36, 99, 235, 0.28);
   outline-offset: 2px;
+}
+
+@layer components {
+  .primary-button {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 font-bold text-white transition hover:bg-blue-800;
+  }
+
+  .secondary-button {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+
+  .settings-button {
+    @apply inline-flex min-h-12 items-center gap-3 rounded-lg border border-slate-300 bg-white px-4 font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+
+  .action-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+
+  .icon-button {
+    @apply grid min-h-11 min-w-11 place-items-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800;
+  }
+
+  .add-small {
+    @apply flex min-h-10 w-full items-center justify-center rounded-lg border border-dashed border-slate-300 text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800;
+  }
 }

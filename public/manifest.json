@@ -1,0 +1,19 @@
+{
+  "name": "MyDay Calendar & Reminders",
+  "short_name": "MyDay",
+  "description": "A mobile-friendly calendar and reminder app.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

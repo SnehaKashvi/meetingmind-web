@@ -1,576 +1,1405 @@
 "use client";
 
 import {
+  Bell,
+  BellRing,
   CalendarDays,
   Check,
-  ClipboardList,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Download,
   Edit3,
+  FileUp,
+  Home as HomeIcon,
+  ListChecks,
+  Moon,
   Plus,
-  Save,
-  Sparkles,
+  Search,
+  Settings,
+  Sun,
   Trash2,
-  UserRound,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Task = {
+type AppTab = "today" | "calendar" | "reminders" | "settings";
+type CalendarView = "month" | "week" | "day";
+type ReminderOption = "at-time" | "5-min" | "15-min" | "1-hour" | "1-day";
+type RepeatOption = "none" | "daily" | "weekly" | "monthly";
+type SnoozeOption = "10-min" | "1-hour" | "tomorrow";
+type ThemeMode = "light" | "dark";
+
+type MyDayItem = {
   id: string;
   title: string;
-  owner: string;
-  dueDate: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+  notes: string;
+  category: string;
+  reminderTime: ReminderOption;
+  repeat: RepeatOption;
+  completedDates: string[];
+  snoozedUntil?: string;
+  notifiedKeys?: string[];
+};
+
+type MyDayState = {
+  version: number;
+  items: MyDayItem[];
+  theme: ThemeMode;
+};
+
+type Occurrence = {
+  item: MyDayItem;
+  date: string;
+  key: string;
+  startsAt: Date;
+  reminderAt: Date;
   completed: boolean;
 };
 
-type MeetingResult = {
-  summary: string;
-  decisions: string[];
-  actionItems: Task[];
+const storageKey = "myday-state-v2";
+const today = new Date();
+const todayString = formatDate(today);
+
+const categories = [
+  "Work",
+  "Personal",
+  "Family",
+  "School",
+  "Health/Fitness",
+  "Bills/Payments"
+];
+
+const categoryStyles: Record<string, string> = {
+  Work: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200",
+  Personal:
+    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+  Family:
+    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200",
+  School:
+    "border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200",
+  "Health/Fitness":
+    "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200",
+  "Bills/Payments":
+    "border-cyan-200 bg-cyan-50 text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950 dark:text-cyan-200"
 };
 
-type EditableTask = Pick<Task, "title" | "owner" | "dueDate">;
+const reminderOptions: Array<{ label: string; value: ReminderOption; minutes: number }> = [
+  { label: "At time", value: "at-time", minutes: 0 },
+  { label: "5 minutes before", value: "5-min", minutes: 5 },
+  { label: "15 minutes before", value: "15-min", minutes: 15 },
+  { label: "1 hour before", value: "1-hour", minutes: 60 },
+  { label: "1 day before", value: "1-day", minutes: 1440 }
+];
 
-const storageKey = "meetingmind-state";
+const repeatOptions: Array<{ label: string; value: RepeatOption }> = [
+  { label: "Does not repeat", value: "none" },
+  { label: "Daily", value: "daily" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" }
+];
 
-const sampleNotes = `Product sync - May 25
-
-Priya confirmed the onboarding redesign should launch in beta next Friday. Marcus will prepare the customer announcement by Thursday. Lena will update the analytics dashboard by June 3 so the team can track completion rate and time to first value.
-
-Decision: keep the first beta group to 50 customers.
-Decision: use the existing help center article format for onboarding tips.
-
-Tom needs to book a follow-up meeting for Monday. Aisha will review the support macros by May 31.`;
-
-const emptyResult: MeetingResult = {
-  summary: "",
-  decisions: [],
-  actionItems: []
+const blankItem: Omit<MyDayItem, "id" | "completedDates" | "notifiedKeys"> = {
+  title: "",
+  date: todayString,
+  startTime: "09:00",
+  endTime: "09:30",
+  location: "",
+  notes: "",
+  category: "Personal",
+  reminderTime: "15-min",
+  repeat: "none"
 };
 
-const demoResult: MeetingResult = {
-  summary:
-    "The team aligned on a limited beta launch for the onboarding redesign, agreed how customer guidance will be presented, and identified supporting launch tasks across communications, analytics, support, and follow-up planning.",
-  decisions: [
-    "Launch the onboarding redesign in beta next Friday.",
-    "Limit the first beta group to 50 customers.",
-    "Use the existing help center article format for onboarding tips."
-  ],
-  actionItems: [
-    {
-      id: "demo-1",
-      title: "Prepare the customer announcement",
-      owner: "Marcus",
-      dueDate: "2026-05-28",
-      completed: false
-    },
-    {
-      id: "demo-2",
-      title: "Update the analytics dashboard",
-      owner: "Lena",
-      dueDate: "2026-06-03",
-      completed: false
-    },
-    {
-      id: "demo-3",
-      title: "Review the support macros",
-      owner: "Aisha",
-      dueDate: "2026-05-31",
-      completed: true
-    }
-  ]
-};
+const sampleItems: MyDayItem[] = [
+  {
+    id: "sample-1",
+    title: "Morning walk",
+    date: todayString,
+    startTime: "07:30",
+    endTime: "08:00",
+    location: "Local park",
+    notes: "A gentle start to the day.",
+    category: "Health/Fitness",
+    reminderTime: "15-min",
+    repeat: "daily",
+    completedDates: [],
+    notifiedKeys: []
+  },
+  {
+    id: "sample-2",
+    title: "Pay electricity bill",
+    date: todayString,
+    startTime: "17:00",
+    endTime: "17:15",
+    location: "Home",
+    notes: "Check account balance first.",
+    category: "Bills/Payments",
+    reminderTime: "1-hour",
+    repeat: "monthly",
+    completedDates: [],
+    notifiedKeys: []
+  },
+  {
+    id: "sample-3",
+    title: "School project check-in",
+    date: formatDate(addDays(today, 1)),
+    startTime: "16:00",
+    endTime: "16:30",
+    location: "Kitchen table",
+    notes: "Review notes and prepare supplies.",
+    category: "School",
+    reminderTime: "1-hour",
+    repeat: "weekly",
+    completedDates: [],
+    notifiedKeys: []
+  },
+  {
+    id: "sample-4",
+    title: "Family call",
+    date: formatDate(addDays(today, 2)),
+    startTime: "18:00",
+    endTime: "18:45",
+    location: "Phone",
+    notes: "Ask about weekend plans.",
+    category: "Family",
+    reminderTime: "15-min",
+    repeat: "none",
+    completedDates: [],
+    notifiedKeys: []
+  }
+];
 
-const initialState = {
-  notes: sampleNotes,
-  result: demoResult,
-  tasks: demoResult.actionItems
-};
+const tabItems: Array<{ label: string; value: AppTab; icon: React.ReactNode }> = [
+  { label: "Today", value: "today", icon: <HomeIcon size={18} /> },
+  { label: "Calendar", value: "calendar", icon: <CalendarDays size={18} /> },
+  { label: "Reminders", value: "reminders", icon: <ListChecks size={18} /> },
+  { label: "Settings", value: "settings", icon: <Settings size={18} /> }
+];
 
 function createId() {
-  return `task-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `myday-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function normaliseDate(value: string) {
-  const lower = value.toLowerCase();
-  const today = new Date();
-  const year = today.getFullYear();
-  const months: Record<string, string> = {
-    january: "01",
-    jan: "01",
-    february: "02",
-    feb: "02",
-    march: "03",
-    mar: "03",
-    april: "04",
-    apr: "04",
-    may: "05",
-    june: "06",
-    jun: "06",
-    july: "07",
-    jul: "07",
-    august: "08",
-    aug: "08",
-    september: "09",
-    sep: "09",
-    october: "10",
-    oct: "10",
-    november: "11",
-    nov: "11",
-    december: "12",
-    dec: "12"
-  };
-  const match = lower.match(
-    /(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})/
-  );
-
-  if (!match) return "";
-  const month = months[match[1]];
-  const day = match[2].padStart(2, "0");
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function normaliseWeekday(value: string) {
-  const lower = value.toLowerCase();
-  const match = lower.match(
-    /\b(?:by|for|on|next)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/
-  );
-  if (!match) return "";
-
-  const weekdays: Record<string, number> = {
-    sunday: 0,
-    monday: 1,
-    tuesday: 2,
-    wednesday: 3,
-    thursday: 4,
-    friday: 5,
-    saturday: 6
-  };
-  const today = new Date();
-  const target = weekdays[match[1]];
-  const daysAhead = (target - today.getDay() + 7) % 7 || 7;
-  const dueDate = new Date(today);
-  dueDate.setDate(today.getDate() + daysAhead);
-  return dueDate.toISOString().slice(0, 10);
+function parseDate(date: string) {
+  return new Date(`${date}T00:00:00`);
 }
 
-function sentenceCase(value: string) {
-  const trimmed = value.trim().replace(/[.]+$/, "");
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+function addDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
 }
 
-function inferOwner(sentence: string) {
-  const ownerMatch = sentence.match(/^([A-Z][a-z]+)\s+(?:will|needs to|to|should|must|can)\b/);
-  if (ownerMatch) return ownerMatch[1];
-
-  const byMatch = sentence.match(/\bowner[:\s]+([A-Z][a-z]+)/i);
-  return byMatch?.[1] ?? "Unassigned";
+function startOfWeek(date: Date) {
+  const next = new Date(date);
+  const diff = next.getDay() === 0 ? -6 : 1 - next.getDay();
+  next.setDate(next.getDate() + diff);
+  return next;
 }
 
-function inferTaskTitle(sentence: string) {
-  return sentence
-    .replace(/^([A-Z][a-z]+)\s+(will|needs to|to|should|must|can)\s+/i, "")
-    .replace(/\s+by\s+.+$/i, "")
-    .replace(/\s+next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$/i, "")
-    .trim();
+function monthGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const gridStart = startOfWeek(first);
+  return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
 }
 
-function summariseMeeting(notes: string): MeetingResult {
-  const sentences = notes
-    .split(/\n|(?<=[.!?])\s+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+function dateTime(date: string, time: string) {
+  return new Date(`${date}T${time || "00:00"}`);
+}
 
-  const decisions = sentences
-    .filter((sentence) => /decision:|decided|confirmed|agreed|approved/i.test(sentence))
-    .map((sentence) => sentenceCase(sentence.replace(/^decision:\s*/i, "")))
-    .slice(0, 5);
+function reminderDateTime(item: MyDayItem, date: string) {
+  const option = reminderOptions.find((entry) => entry.value === item.reminderTime);
+  const when = dateTime(date, item.startTime);
+  when.setMinutes(when.getMinutes() - (option?.minutes ?? 0));
+  return when;
+}
 
-  const actionSentences = sentences.filter((sentence) =>
-    /\b(will|needs to|to do|action|owner|by\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d))/i.test(
-      sentence
-    )
-  );
+function friendlyDate(date: string) {
+  return new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  }).format(parseDate(date));
+}
 
-  const actionItems = actionSentences
-    .map((sentence) => ({
-      id: createId(),
-      title: sentenceCase(inferTaskTitle(sentence) || sentence),
-      owner: inferOwner(sentence),
-      dueDate: normaliseDate(sentence) || normaliseWeekday(sentence),
-      completed: false
-    }))
-    .filter((task) => task.title.length > 2)
-    .slice(0, 8);
+function monthTitle(date: Date) {
+  return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(date);
+}
 
-  const summarySource = sentences
-    .filter((sentence) => !/^decision:/i.test(sentence))
-    .slice(0, 3)
-    .join(" ");
+function timeLabel(time: string) {
+  if (!time) return "";
+  const [hours, minutes] = time.split(":").map(Number);
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(2026, 0, 1, hours, minutes));
+}
 
+function occursOn(item: MyDayItem, date: string) {
+  if (date < item.date) return false;
+  if (item.repeat === "none") return item.date === date;
+
+  const start = parseDate(item.date);
+  const target = parseDate(date);
+  const diffDays = Math.floor((target.getTime() - start.getTime()) / 86400000);
+
+  if (item.repeat === "daily") return diffDays >= 0;
+  if (item.repeat === "weekly") return diffDays >= 0 && diffDays % 7 === 0;
+  return target.getDate() === start.getDate();
+}
+
+function makeOccurrence(item: MyDayItem, date: string): Occurrence {
+  const key = `${item.id}:${date}`;
   return {
-    summary:
-      summarySource.length > 220
-        ? `${summarySource.slice(0, 217).trim()}...`
-        : summarySource || "Meeting notes were captured and organised into decisions and follow-up tasks.",
-    decisions:
-      decisions.length > 0
-        ? decisions
-        : ['No explicit decisions found. Add lines beginning with "Decision:" for clearer extraction.'],
-    actionItems
+    item,
+    date,
+    key,
+    startsAt: dateTime(date, item.startTime),
+    reminderAt: item.snoozedUntil ? new Date(item.snoozedUntil) : reminderDateTime(item, date),
+    completed: item.completedDates.includes(date)
   };
+}
+
+function occurrencesBetween(items: MyDayItem[], start: Date, days: number) {
+  const dates = Array.from({ length: days }, (_, index) => formatDate(addDays(start, index)));
+  return dates
+    .flatMap((date) =>
+      items.filter((item) => occursOn(item, date)).map((item) => makeOccurrence(item, date))
+    )
+    .sort((first, second) => first.startsAt.getTime() - second.startsAt.getTime());
+}
+
+function importItems(value: unknown): MyDayItem[] | null {
+  if (!Array.isArray(value)) return null;
+
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => {
+      const entry = item as Partial<MyDayItem>;
+      return {
+        id: entry.id ?? createId(),
+        title: entry.title ?? "Imported reminder",
+        date: entry.date ?? todayString,
+        startTime: entry.startTime ?? "09:00",
+        endTime: entry.endTime ?? "09:30",
+        location: entry.location ?? "",
+        notes: entry.notes ?? "",
+        category: categories.includes(entry.category ?? "") ? entry.category! : "Personal",
+        reminderTime: entry.reminderTime ?? "15-min",
+        repeat: entry.repeat ?? "none",
+        completedDates: entry.completedDates ?? [],
+        snoozedUntil: entry.snoozedUntil,
+        notifiedKeys: entry.notifiedKeys ?? []
+      };
+    });
 }
 
 export default function Home() {
-  const [notes, setNotes] = useState(initialState.notes);
-  const [result, setResult] = useState<MeetingResult>(initialState.result);
-  const [tasks, setTasks] = useState<Task[]>(initialState.tasks);
-  const [draftTask, setDraftTask] = useState<EditableTask>({
-    title: "",
-    owner: "",
-    dueDate: ""
-  });
+  const [items, setItems] = useState<MyDayItem[]>(sampleItems);
+  const [activeTab, setActiveTab] = useState<AppTab>("today");
+  const [calendarView, setCalendarView] = useState<CalendarView>("month");
+  const [cursorDate, setCursorDate] = useState(today);
+  const [selectedDate, setSelectedDate] = useState(todayString);
+  const [search, setSearch] = useState("");
+  const [theme, setTheme] = useState<ThemeMode>("light");
+  const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingTask, setEditingTask] = useState<EditableTask>({
-    title: "",
-    owner: "",
-    dueDate: ""
-  });
+  const [form, setForm] = useState(blankItem);
+  const [notice, setNotice] = useState("Notifications are off");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Load saved personal data first. If nothing exists, sample reminders appear.
   useEffect(() => {
     const saved = window.localStorage.getItem(storageKey);
     if (!saved) return;
 
     try {
-      const parsed = JSON.parse(saved) as typeof initialState;
-      setNotes(parsed.notes ?? initialState.notes);
-      setResult(parsed.result ?? initialState.result);
-      setTasks(parsed.tasks ?? initialState.tasks);
+      const parsed = JSON.parse(saved) as MyDayState;
+      setItems(parsed.items ?? sampleItems);
+      setTheme(parsed.theme ?? "light");
     } catch {
       window.localStorage.removeItem(storageKey);
     }
   }, []);
 
+  // Save each change locally in this browser.
   useEffect(() => {
-    window.localStorage.setItem(storageKey, JSON.stringify({ notes, result, tasks }));
-  }, [notes, result, tasks]);
+    window.localStorage.setItem(storageKey, JSON.stringify({ version: 2, items, theme }));
+  }, [items, theme]);
 
-  const completedCount = useMemo(
-    () => tasks.filter((task) => task.completed).length,
-    [tasks]
+  // Register PWA service worker and read notification state.
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
+    if ("Notification" in window && Notification.permission === "granted") {
+      setNotice("Notifications are on");
+    }
+  }, []);
+
+  // Reminder checker. This works while the app is open or installed and active.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      const now = new Date();
+
+      setItems((current) =>
+        current.map((item) => {
+          const next = occurrencesBetween([item], addDays(now, -1), 9).find(
+            (occurrence) =>
+              !occurrence.completed &&
+              occurrence.reminderAt <= now &&
+              occurrence.startsAt >= addDays(now, -1) &&
+              !item.notifiedKeys?.includes(occurrence.key)
+          );
+
+          if (!next) return item;
+
+          new Notification(`MyDay: ${item.title}`, {
+            body: `${friendlyDate(next.date)} at ${timeLabel(item.startTime)}`,
+            icon: "/icon.svg",
+            tag: next.key
+          });
+
+          return {
+            ...item,
+            notifiedKeys: [...(item.notifiedKeys ?? []), next.key]
+          };
+        })
+      );
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const allOccurrences = useMemo(
+    () => occurrencesBetween(items, addDays(today, -30), 395),
+    [items]
   );
 
-  const openCount = tasks.length - completedCount;
+  const todayOccurrences = allOccurrences.filter((occurrence) => occurrence.date === todayString);
+  const upcoming = allOccurrences
+    .filter((occurrence) => !occurrence.completed && occurrence.startsAt >= new Date())
+    .slice(0, 8);
+  const pendingCount = allOccurrences.filter(
+    (occurrence) => !occurrence.completed && occurrence.startsAt >= parseDate(todayString)
+  ).length;
+  const searchResults = allOccurrences.filter((occurrence) => {
+    const term = search.toLowerCase().trim();
+    if (!term) return true;
+    return [
+      occurrence.item.title,
+      occurrence.item.location,
+      occurrence.item.notes,
+      occurrence.item.category,
+      occurrence.date
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(term);
+  });
 
-  function handleSummarise() {
-    const nextResult = summariseMeeting(notes);
-    setResult(nextResult);
-    setTasks((current) => [...nextResult.actionItems, ...current]);
-  }
-
-  function addTask() {
-    if (!draftTask.title.trim()) return;
-    setTasks((current) => [
-      {
-        id: createId(),
-        title: draftTask.title.trim(),
-        owner: draftTask.owner.trim() || "Unassigned",
-        dueDate: draftTask.dueDate,
-        completed: false
-      },
-      ...current
-    ]);
-    setDraftTask({ title: "", owner: "", dueDate: "" });
-  }
-
-  function startEditing(task: Task) {
-    setEditingId(task.id);
-    setEditingTask({
-      title: task.title,
-      owner: task.owner,
-      dueDate: task.dueDate
-    });
-  }
-
-  function saveEditing() {
-    if (!editingId || !editingTask.title.trim()) return;
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === editingId
-          ? {
-              ...task,
-              title: editingTask.title.trim(),
-              owner: editingTask.owner.trim() || "Unassigned",
-              dueDate: editingTask.dueDate
-            }
-          : task
-      )
-    );
+  function openAdd(date = selectedDate, quickTitle = "") {
     setEditingId(null);
+    setForm({
+      ...blankItem,
+      title: quickTitle,
+      date
+    });
+    setFormOpen(true);
   }
 
-  function deleteTask(id: string) {
-    setTasks((current) => current.filter((task) => task.id !== id));
+  function openQuick(range: "today" | "tomorrow" | "weekend" | "next-week") {
+    const nextSaturday = addDays(today, (6 - today.getDay() + 7) % 7 || 7);
+    const dateMap = {
+      today,
+      tomorrow: addDays(today, 1),
+      weekend: nextSaturday,
+      "next-week": addDays(today, 7)
+    };
+    openAdd(formatDate(dateMap[range]), "Reminder");
   }
 
-  function toggleTask(id: string) {
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === id ? { ...task, completed: !task.completed } : task
+  function openEdit(item: MyDayItem) {
+    setEditingId(item.id);
+    setForm({
+      title: item.title,
+      date: item.date,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      location: item.location,
+      notes: item.notes,
+      category: item.category,
+      reminderTime: item.reminderTime,
+      repeat: item.repeat,
+      snoozedUntil: item.snoozedUntil
+    });
+    setFormOpen(true);
+  }
+
+  function saveItem() {
+    if (!form.title.trim()) return;
+
+    if (editingId) {
+      setItems((current) =>
+        current.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                ...form,
+                title: form.title.trim(),
+                notifiedKeys: []
+              }
+            : item
+        )
+      );
+    } else {
+      setItems((current) => [
+        ...current,
+        {
+          ...form,
+          id: createId(),
+          title: form.title.trim(),
+          completedDates: [],
+          notifiedKeys: []
+        }
+      ]);
+    }
+
+    setSelectedDate(form.date);
+    setCursorDate(parseDate(form.date));
+    setFormOpen(false);
+  }
+
+  function deleteItem(id: string) {
+    const item = items.find((entry) => entry.id === id);
+    if (!window.confirm(`Delete "${item?.title ?? "this reminder"}"?`)) return;
+    setItems((current) => current.filter((entry) => entry.id !== id));
+  }
+
+  function completeOccurrence(occurrence: Occurrence) {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === occurrence.item.id
+          ? {
+              ...item,
+              completedDates: Array.from(new Set([...item.completedDates, occurrence.date]))
+            }
+          : item
       )
     );
   }
 
-  function resetDemo() {
-    setNotes(initialState.notes);
-    setResult(initialState.result);
-    setTasks(initialState.tasks);
+  function snoozeOccurrence(occurrence: Occurrence, option: SnoozeOption) {
+    const base = new Date();
+    if (option === "10-min") base.setMinutes(base.getMinutes() + 10);
+    if (option === "1-hour") base.setHours(base.getHours() + 1);
+    if (option === "tomorrow") {
+      base.setDate(base.getDate() + 1);
+      base.setHours(9, 0, 0, 0);
+    }
+
+    setItems((current) =>
+      current.map((item) =>
+        item.id === occurrence.item.id
+          ? { ...item, snoozedUntil: base.toISOString(), notifiedKeys: [] }
+          : item
+      )
+    );
+  }
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      setNotice("Notifications are not available here");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotice(permission === "granted" ? "Notifications are on" : "Notifications are blocked");
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "myday-reminders.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImport(file: File | undefined) {
+    if (!file) return;
+    const text = await file.text();
+    const parsed = importItems(JSON.parse(text));
+    if (!parsed) return;
+    setItems(parsed);
+  }
+
+  function moveCalendar(direction: number) {
+    const next = new Date(cursorDate);
+    if (calendarView === "month") next.setMonth(next.getMonth() + direction);
+    if (calendarView === "week") next.setDate(next.getDate() + direction * 7);
+    if (calendarView === "day") next.setDate(next.getDate() + direction);
+    setCursorDate(next);
+    setSelectedDate(formatDate(next));
+  }
+
+  function goToday() {
+    setCursorDate(new Date());
+    setSelectedDate(todayString);
+    setActiveTab("today");
   }
 
   return (
-    <main className="min-h-screen">
-      <section className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
-              MeetingMind
-            </p>
-            <h1 className="mt-2 text-3xl font-bold text-slate-950 sm:text-4xl">
-              Turn meeting notes into clear tasks.
-            </h1>
+    <main className={theme === "dark" ? "dark" : ""}>
+      <div className="min-h-screen bg-slate-100 text-slate-950 dark:bg-slate-950 dark:text-white">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+          <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                  MyDay
+                </p>
+                <h1 className="text-2xl font-bold sm:text-3xl">Your personal day planner</h1>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-blue-700 px-3 py-1 text-sm font-bold text-white">
+                  {pendingCount}
+                </span>
+                <button
+                  className="grid h-11 w-11 place-items-center rounded-full border border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                  title="Switch theme"
+                  type="button"
+                >
+                  {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+                </button>
+              </div>
+            </div>
+            <nav className="mt-4 grid grid-cols-4 gap-2">
+              {tabItems.map((tab) => (
+                <button
+                  className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-2 text-xs font-bold sm:flex-row sm:text-sm ${
+                    activeTab === tab.value
+                      ? "bg-blue-700 text-white"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  }`}
+                  key={tab.value}
+                  onClick={() => setActiveTab(tab.value)}
+                  type="button"
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-center sm:min-w-[360px]">
-            <Stat label="Tasks" value={tasks.length.toString()} />
-            <Stat label="Open" value={openCount.toString()} />
-            <Stat label="Done" value={completedCount.toString()} />
-          </div>
+        </header>
+
+        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+          {activeTab === "today" && (
+            <TodayScreen
+              notice={notice}
+              onAdd={openAdd}
+              onComplete={completeOccurrence}
+              onEdit={openEdit}
+              onEnableNotifications={enableNotifications}
+              onQuick={openQuick}
+              onSnooze={snoozeOccurrence}
+              todayItems={todayOccurrences}
+              upcoming={upcoming}
+            />
+          )}
+
+          {activeTab === "calendar" && (
+            <CalendarScreen
+              calendarView={calendarView}
+              cursorDate={cursorDate}
+              items={items}
+              onAdd={openAdd}
+              onDelete={deleteItem}
+              onEdit={openEdit}
+              onMove={moveCalendar}
+              onSelectDate={(date) => {
+                setSelectedDate(date);
+                setCursorDate(parseDate(date));
+              }}
+              onView={setCalendarView}
+              selectedDate={selectedDate}
+            />
+          )}
+
+          {activeTab === "reminders" && (
+            <RemindersScreen
+              onComplete={completeOccurrence}
+              onDelete={deleteItem}
+              onEdit={openEdit}
+              onSearch={setSearch}
+              onSnooze={snoozeOccurrence}
+              results={searchResults}
+              search={search}
+            />
+          )}
+
+          {activeTab === "settings" && (
+            <SettingsScreen
+              notice={notice}
+              onEnableNotifications={enableNotifications}
+              onExport={exportData}
+              onImport={() => fileInputRef.current?.click()}
+              onReset={() => {
+                if (window.confirm("Replace your reminders with sample data?")) {
+                  setItems(sampleItems);
+                }
+              }}
+              theme={theme}
+              toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+            />
+          )}
         </div>
-      </section>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_1.2fr] lg:px-8">
-        <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-soft sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-slate-950">Meeting notes</h2>
-            <button
-              className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-              onClick={resetDemo}
-              type="button"
-            >
-              <ClipboardList size={16} />
-              Demo data
-            </button>
-          </div>
-          <textarea
-            className="mt-4 min-h-[360px] w-full resize-y rounded-md border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-800 shadow-inner"
-            onChange={(event) => setNotes(event.target.value)}
-            placeholder="Paste meeting notes here..."
-            value={notes}
+        <button
+          className="fixed bottom-5 right-5 z-10 inline-flex min-h-14 items-center gap-2 rounded-full bg-blue-700 px-5 text-base font-bold text-white shadow-2xl hover:bg-blue-800"
+          onClick={() => openAdd()}
+          type="button"
+        >
+          <Plus size={22} />
+          Add Reminder
+        </button>
+
+        <input
+          accept="application/json"
+          className="hidden"
+          onChange={(event) => handleImport(event.target.files?.[0])}
+          ref={fileInputRef}
+          type="file"
+        />
+
+        {formOpen && (
+          <ItemForm
+            editing={Boolean(editingId)}
+            form={form}
+            onChange={setForm}
+            onClose={() => setFormOpen(false)}
+            onSave={saveItem}
           />
-          <button
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-700 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-blue-800 sm:w-auto"
-            onClick={handleSummarise}
-            type="button"
-          >
-            <Sparkles size={18} />
-            Summarise Meeting
-          </button>
-        </section>
-
-        <section className="grid gap-6">
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-soft sm:p-5">
-            <h2 className="text-lg font-semibold text-slate-950">AI meeting output</h2>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <OutputBlock title="Summary" full>
-                <p className="text-sm leading-6 text-slate-700">{result.summary}</p>
-              </OutputBlock>
-              <OutputBlock title="Key decisions">
-                <ul className="space-y-2">
-                  {result.decisions.map((decision) => (
-                    <li className="text-sm leading-6 text-slate-700" key={decision}>
-                      {decision}
-                    </li>
-                  ))}
-                </ul>
-              </OutputBlock>
-              <OutputBlock title="Detected action items">
-                <ul className="space-y-2">
-                  {result.actionItems.map((item) => (
-                    <li className="text-sm leading-6 text-slate-700" key={item.id}>
-                      <span className="font-medium text-slate-900">{item.title}</span>
-                      <span className="block text-slate-500">
-                        {item.owner} {item.dueDate ? `- ${item.dueDate}` : "- no due date"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </OutputBlock>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-soft sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-slate-950">Task dashboard</h2>
-              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
-                Saved in this browser
-              </span>
-            </div>
-
-            <div className="mt-4 grid gap-3 rounded-md bg-slate-50 p-3 md:grid-cols-[1.5fr_1fr_160px_auto]">
-              <TextInput
-                label="Task"
-                onChange={(value) => setDraftTask((task) => ({ ...task, title: value }))}
-                placeholder="Add a task"
-                value={draftTask.title}
-              />
-              <TextInput
-                label="Owner"
-                onChange={(value) => setDraftTask((task) => ({ ...task, owner: value }))}
-                placeholder="Owner"
-                value={draftTask.owner}
-              />
-              <TextInput
-                label="Due date"
-                onChange={(value) => setDraftTask((task) => ({ ...task, dueDate: value }))}
-                type="date"
-                value={draftTask.dueDate}
-              />
-              <button
-                className="inline-flex h-11 items-center justify-center gap-2 self-end rounded-md bg-slate-950 px-4 font-semibold text-white transition hover:bg-slate-800"
-                onClick={addTask}
-                type="button"
-              >
-                <Plus size={18} />
-                Add
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {tasks.map((task) => {
-                const isEditing = editingId === task.id;
-
-                return (
-                  <article
-                    className="rounded-lg border border-slate-200 bg-white p-4"
-                    key={task.id}
-                  >
-                    {isEditing ? (
-                      <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_160px_auto_auto]">
-                        <TextInput
-                          label="Task"
-                          onChange={(value) =>
-                            setEditingTask((item) => ({ ...item, title: value }))
-                          }
-                          value={editingTask.title}
-                        />
-                        <TextInput
-                          label="Owner"
-                          onChange={(value) =>
-                            setEditingTask((item) => ({ ...item, owner: value }))
-                          }
-                          value={editingTask.owner}
-                        />
-                        <TextInput
-                          label="Due date"
-                          onChange={(value) =>
-                            setEditingTask((item) => ({ ...item, dueDate: value }))
-                          }
-                          type="date"
-                          value={editingTask.dueDate}
-                        />
-                        <IconButton label="Save" onClick={saveEditing}>
-                          <Save size={17} />
-                        </IconButton>
-                        <IconButton label="Cancel" onClick={() => setEditingId(null)}>
-                          <X size={17} />
-                        </IconButton>
-                      </div>
-                    ) : (
-                      <div className="grid gap-3 sm:grid-cols-[auto_1fr_auto] sm:items-center">
-                        <button
-                          aria-label={
-                            task.completed ? "Mark task incomplete" : "Mark task complete"
-                          }
-                          className={`flex h-10 w-10 items-center justify-center rounded-full border ${
-                            task.completed
-                              ? "border-emerald-600 bg-emerald-600 text-white"
-                              : "border-slate-300 text-slate-500 hover:bg-slate-50"
-                          }`}
-                          onClick={() => toggleTask(task.id)}
-                          title={
-                            task.completed ? "Mark task incomplete" : "Mark task complete"
-                          }
-                          type="button"
-                        >
-                          <Check size={18} />
-                        </button>
-                        <div className={task.completed ? "opacity-60" : ""}>
-                          <h3
-                            className={`font-semibold text-slate-950 ${
-                              task.completed ? "line-through" : ""
-                            }`}
-                          >
-                            {task.title}
-                          </h3>
-                          <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-500">
-                            <span className="inline-flex items-center gap-1">
-                              <UserRound size={15} />
-                              {task.owner}
-                            </span>
-                            <span className="inline-flex items-center gap-1">
-                              <CalendarDays size={15} />
-                              {task.dueDate || "No due date"}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <IconButton label="Edit task" onClick={() => startEditing(task)}>
-                            <Edit3 size={17} />
-                          </IconButton>
-                          <IconButton label="Delete task" onClick={() => deleteTask(task.id)}>
-                            <Trash2 size={17} />
-                          </IconButton>
-                        </div>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        </section>
+        )}
       </div>
     </main>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-      <p className="text-2xl font-bold text-slate-950">{value}</p>
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-    </div>
-  );
-}
-
-function OutputBlock({
-  children,
-  full,
-  title
+function TodayScreen({
+  notice,
+  onAdd,
+  onComplete,
+  onEdit,
+  onEnableNotifications,
+  onQuick,
+  onSnooze,
+  todayItems,
+  upcoming
 }: {
-  children: React.ReactNode;
-  full?: boolean;
-  title: string;
+  notice: string;
+  onAdd: (date?: string, quickTitle?: string) => void;
+  onComplete: (occurrence: Occurrence) => void;
+  onEdit: (item: MyDayItem) => void;
+  onEnableNotifications: () => void;
+  onQuick: (range: "today" | "tomorrow" | "weekend" | "next-week") => void;
+  onSnooze: (occurrence: Occurrence, option: SnoozeOption) => void;
+  todayItems: Occurrence[];
+  upcoming: Occurrence[];
 }) {
   return (
-    <div className={`rounded-lg border border-slate-200 bg-slate-50 p-4 ${full ? "md:col-span-2" : ""}`}>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {title}
-      </h3>
-      {children}
+    <div className="grid gap-5 lg:grid-cols-[1.3fr_0.9fr]">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold">Today</h2>
+            <p className="mt-1 text-slate-600 dark:text-slate-300">{friendlyDate(todayString)}</p>
+          </div>
+          <button
+            className="inline-flex min-h-14 items-center justify-center gap-2 rounded-lg bg-blue-700 px-5 text-lg font-bold text-white hover:bg-blue-800"
+            onClick={() => onAdd(todayString)}
+            type="button"
+          >
+            <Plus size={22} />
+            Add Reminder
+          </button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            ["Today", "today"],
+            ["Tomorrow", "tomorrow"],
+            ["This Weekend", "weekend"],
+            ["Next Week", "next-week"]
+          ].map(([label, value]) => (
+            <button
+              className="min-h-12 rounded-lg border border-slate-300 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              key={value}
+              onClick={() => onQuick(value as "today" | "tomorrow" | "weekend" | "next-week")}
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {todayItems.length === 0 ? (
+            <EmptyState
+              action="Add something for today"
+              message="Nothing planned yet. Add a reminder, appointment, bill, or task."
+              onAction={() => onAdd(todayString)}
+            />
+          ) : (
+            todayItems.map((occurrence) => (
+              <OccurrenceCard
+                key={occurrence.key}
+                occurrence={occurrence}
+                onComplete={onComplete}
+                onEdit={onEdit}
+                onSnooze={onSnooze}
+              />
+            ))
+          )}
+        </div>
+      </section>
+
+      <aside className="grid gap-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="mb-3 flex items-center gap-2 text-xl font-bold">
+            <BellRing size={20} />
+            Notifications
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-300">{notice}</p>
+          <button
+            className="mt-4 min-h-12 w-full rounded-lg bg-slate-950 px-4 font-bold text-white dark:bg-white dark:text-slate-950"
+            onClick={onEnableNotifications}
+            type="button"
+          >
+            Turn on notifications
+          </button>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="mb-3 flex items-center gap-2 text-xl font-bold">
+            <Clock size={20} />
+            Coming up
+          </h2>
+          <div className="space-y-3">
+            {upcoming.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">No upcoming reminders.</p>
+            ) : (
+              upcoming.map((occurrence) => (
+                <MiniOccurrence key={occurrence.key} occurrence={occurrence} />
+              ))
+            )}
+          </div>
+        </section>
+      </aside>
     </div>
   );
 }
 
-function TextInput({
+function CalendarScreen({
+  calendarView,
+  cursorDate,
+  items,
+  onAdd,
+  onDelete,
+  onEdit,
+  onMove,
+  onSelectDate,
+  onView,
+  selectedDate
+}: {
+  calendarView: CalendarView;
+  cursorDate: Date;
+  items: MyDayItem[];
+  onAdd: (date?: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: (item: MyDayItem) => void;
+  onMove: (direction: number) => void;
+  onSelectDate: (date: string) => void;
+  onView: (view: CalendarView) => void;
+  selectedDate: string;
+}) {
+  const selectedItems = occurrencesBetween(items, parseDate(selectedDate), 1);
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="icon-button" onClick={() => onMove(-1)} type="button">
+            <ChevronLeft size={18} />
+          </button>
+          <h2 className="min-w-48 text-xl font-bold">
+            {calendarView === "month"
+              ? monthTitle(cursorDate)
+              : calendarView === "week"
+                ? `Week of ${friendlyDate(formatDate(startOfWeek(cursorDate)))}`
+                : friendlyDate(formatDate(cursorDate))}
+          </h2>
+          <button className="icon-button" onClick={() => onMove(1)} type="button">
+            <ChevronRight size={18} />
+          </button>
+        </div>
+        <div className="grid grid-cols-3 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+          {(["month", "week", "day"] as CalendarView[]).map((view) => (
+            <button
+              className={`rounded-md px-4 py-2 text-sm font-bold capitalize ${
+                calendarView === view
+                  ? "bg-white text-blue-700 shadow-sm dark:bg-slate-950 dark:text-blue-300"
+                  : "text-slate-600 dark:text-slate-300"
+              }`}
+              key={view}
+              onClick={() => onView(view)}
+              type="button"
+            >
+              {view}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        {calendarView === "month" && (
+          <MonthCalendar
+            cursorDate={cursorDate}
+            items={items}
+            onAdd={onAdd}
+            onSelectDate={onSelectDate}
+            selectedDate={selectedDate}
+          />
+        )}
+        {calendarView === "week" && (
+          <WeekCalendar cursorDate={cursorDate} items={items} onAdd={onAdd} onEdit={onEdit} />
+        )}
+        {calendarView === "day" && (
+          <DayCalendar
+            date={formatDate(cursorDate)}
+            items={items}
+            onAdd={onAdd}
+            onDelete={onDelete}
+            onEdit={onEdit}
+          />
+        )}
+      </div>
+
+      <div className="mt-5 rounded-xl bg-slate-50 p-4 dark:bg-slate-950">
+        <h3 className="mb-3 text-lg font-bold">{friendlyDate(selectedDate)}</h3>
+        <div className="space-y-3">
+          {selectedItems.length === 0 ? (
+            <EmptyState
+              action="Add to this day"
+              message="This day is open."
+              onAction={() => onAdd(selectedDate)}
+            />
+          ) : (
+            selectedItems.map((occurrence) => (
+              <ItemLine
+                key={occurrence.key}
+                occurrence={occurrence}
+                onDelete={onDelete}
+                onEdit={onEdit}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MonthCalendar({
+  cursorDate,
+  items,
+  onAdd,
+  onSelectDate,
+  selectedDate
+}: {
+  cursorDate: Date;
+  items: MyDayItem[];
+  onAdd: (date?: string) => void;
+  onSelectDate: (date: string) => void;
+  selectedDate: string;
+}) {
+  return (
+    <div>
+      <div className="grid grid-cols-7 pb-2 text-center text-xs font-bold uppercase text-slate-500">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+          <span key={day}>{day}</span>
+        ))}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-7">
+        {monthGrid(cursorDate).map((day) => {
+          const date = formatDate(day);
+          const dayItems = occurrencesBetween(items, day, 1).slice(0, 3);
+          const selected = selectedDate === date;
+
+          return (
+            <button
+              className={`min-h-24 rounded-lg border p-2 text-left ${
+                selected
+                  ? "border-blue-500 bg-blue-50 dark:bg-blue-950"
+                  : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900"
+              } ${day.getMonth() === cursorDate.getMonth() ? "" : "opacity-50"}`}
+              key={date}
+              onClick={() => onSelectDate(date)}
+              onDoubleClick={() => onAdd(date)}
+              type="button"
+            >
+              <span className="font-bold">{day.getDate()}</span>
+              <div className="mt-2 space-y-1">
+                {dayItems.map((occurrence) => (
+                  <span
+                    className={`block truncate rounded border px-2 py-1 text-xs font-bold ${categoryStyles[occurrence.item.category]}`}
+                    key={occurrence.key}
+                  >
+                    {occurrence.item.title}
+                  </span>
+                ))}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WeekCalendar({
+  cursorDate,
+  items,
+  onAdd,
+  onEdit
+}: {
+  cursorDate: Date;
+  items: MyDayItem[];
+  onAdd: (date?: string) => void;
+  onEdit: (item: MyDayItem) => void;
+}) {
+  const days = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(cursorDate), index));
+  return (
+    <div className="grid gap-3 md:grid-cols-7">
+      {days.map((day) => {
+        const date = formatDate(day);
+        const dayItems = occurrencesBetween(items, day, 1);
+        return (
+          <div
+            className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950"
+            key={date}
+          >
+            <p className="mb-3 font-bold">{friendlyDate(date)}</p>
+            <div className="space-y-2">
+              {dayItems.map((occurrence) => (
+                <button
+                  className={`w-full rounded border px-2 py-2 text-left text-xs font-bold ${categoryStyles[occurrence.item.category]}`}
+                  key={occurrence.key}
+                  onClick={() => onEdit(occurrence.item)}
+                  type="button"
+                >
+                  {timeLabel(occurrence.item.startTime)} {occurrence.item.title}
+                </button>
+              ))}
+              <button className="add-small" onClick={() => onAdd(date)} type="button">
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DayCalendar({
+  date,
+  items,
+  onAdd,
+  onDelete,
+  onEdit
+}: {
+  date: string;
+  items: MyDayItem[];
+  onAdd: (date?: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: (item: MyDayItem) => void;
+}) {
+  const dayItems = occurrencesBetween(items, parseDate(date), 1);
+  return (
+    <div className="space-y-3">
+      <button className="primary-button" onClick={() => onAdd(date)} type="button">
+        <Plus size={18} />
+        Add to this day
+      </button>
+      {dayItems.length === 0 ? (
+        <EmptyState action="Add item" message="No plans for this day." onAction={() => onAdd(date)} />
+      ) : (
+        dayItems.map((occurrence) => (
+          <ItemLine
+            key={occurrence.key}
+            occurrence={occurrence}
+            onDelete={onDelete}
+            onEdit={onEdit}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function RemindersScreen({
+  onComplete,
+  onDelete,
+  onEdit,
+  onSearch,
+  onSnooze,
+  results,
+  search
+}: {
+  onComplete: (occurrence: Occurrence) => void;
+  onDelete: (id: string) => void;
+  onEdit: (item: MyDayItem) => void;
+  onSearch: (value: string) => void;
+  onSnooze: (occurrence: Occurrence, option: SnoozeOption) => void;
+  results: Occurrence[];
+  search: string;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="text-2xl font-bold">Reminders</h2>
+      <label className="mt-4 flex min-h-12 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950">
+        <Search size={18} />
+        <input
+          className="w-full bg-transparent outline-none"
+          onChange={(event) => onSearch(event.target.value)}
+          placeholder="Search reminders"
+          value={search}
+        />
+      </label>
+      <div className="mt-5 space-y-3">
+        {results.length === 0 ? (
+          <EmptyState message="No matching reminders found." />
+        ) : (
+          results.slice(0, 80).map((occurrence) => (
+            <OccurrenceCard
+              key={occurrence.key}
+              occurrence={occurrence}
+              onComplete={onComplete}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              onSnooze={onSnooze}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SettingsScreen({
+  notice,
+  onEnableNotifications,
+  onExport,
+  onImport,
+  onReset,
+  theme,
+  toggleTheme
+}: {
+  notice: string;
+  onEnableNotifications: () => void;
+  onExport: () => void;
+  onImport: () => void;
+  onReset: () => void;
+  theme: ThemeMode;
+  toggleTheme: () => void;
+}) {
+  return (
+    <section className="grid gap-5 lg:grid-cols-2">
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-2xl font-bold">Settings</h2>
+        <p className="mt-2 text-slate-600 dark:text-slate-300">
+          MyDay is personal-only. Your data stays in this browser unless you export it.
+        </p>
+        <div className="mt-5 grid gap-3">
+          <button className="settings-button" onClick={onEnableNotifications} type="button">
+            <BellRing size={19} />
+            {notice}
+          </button>
+          <button className="settings-button" onClick={toggleTheme} type="button">
+            {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+            {theme === "dark" ? "Use light mode" : "Use dark mode"}
+          </button>
+          <button className="settings-button" onClick={onExport} type="button">
+            <Download size={19} />
+            Export reminders
+          </button>
+          <button className="settings-button" onClick={onImport} type="button">
+            <FileUp size={19} />
+            Import reminders
+          </button>
+          <button className="settings-button" onClick={onReset} type="button">
+            <ListChecks size={19} />
+            Restore sample reminders
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-2xl font-bold">Install on your phone</h2>
+        <div className="mt-4 space-y-4 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          <p>Android: open the site in Chrome, open the menu, then choose Add to Home screen.</p>
+          <p>iPhone: open the site in Safari, tap Share, then choose Add to Home Screen.</p>
+          <p>Keep notifications allowed so reminders can alert you while the app is active.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OccurrenceCard({
+  occurrence,
+  onComplete,
+  onDelete,
+  onEdit,
+  onSnooze
+}: {
+  occurrence: Occurrence;
+  onComplete: (occurrence: Occurrence) => void;
+  onDelete?: (id: string) => void;
+  onEdit: (item: MyDayItem) => void;
+  onSnooze: (occurrence: Occurrence, option: SnoozeOption) => void;
+}) {
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <span
+            className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${categoryStyles[occurrence.item.category]}`}
+          >
+            {occurrence.item.category}
+          </span>
+          <h3 className="mt-2 text-lg font-bold">{occurrence.item.title}</h3>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            {friendlyDate(occurrence.date)} at {timeLabel(occurrence.item.startTime)}
+          </p>
+          {occurrence.item.location && (
+            <p className="text-sm text-slate-500 dark:text-slate-400">{occurrence.item.location}</p>
+          )}
+          {occurrence.item.notes && (
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              {occurrence.item.notes}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="action-button bg-emerald-600 text-white"
+            disabled={occurrence.completed}
+            onClick={() => onComplete(occurrence)}
+            type="button"
+          >
+            <Check size={16} />
+            {occurrence.completed ? "Done" : "Complete"}
+          </button>
+          <button className="action-button" onClick={() => onEdit(occurrence.item)} type="button">
+            <Edit3 size={16} />
+            Edit
+          </button>
+          {onDelete && (
+            <button
+              className="action-button"
+              onClick={() => onDelete(occurrence.item.id)}
+              type="button"
+            >
+              <Trash2 size={16} />
+              Delete
+            </button>
+          )}
+        </div>
+      </div>
+      {!occurrence.completed && (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            ["10 min", "10-min"],
+            ["1 hour", "1-hour"],
+            ["Tomorrow", "tomorrow"]
+          ].map(([label, value]) => (
+            <button
+              className="min-h-10 rounded-lg border border-slate-300 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              key={value}
+              onClick={() => onSnooze(occurrence, value as SnoozeOption)}
+              type="button"
+            >
+              Snooze {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function MiniOccurrence({ occurrence }: { occurrence: Occurrence }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+      <p className="font-bold">{occurrence.item.title}</p>
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        {friendlyDate(occurrence.date)} at {timeLabel(occurrence.item.startTime)}
+      </p>
+    </div>
+  );
+}
+
+function ItemLine({
+  occurrence,
+  onDelete,
+  onEdit
+}: {
+  occurrence: Occurrence;
+  onDelete: (id: string) => void;
+  onEdit: (item: MyDayItem) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="font-bold">
+          {timeLabel(occurrence.item.startTime)} - {occurrence.item.title}
+        </p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          {occurrence.item.category} {occurrence.item.repeat !== "none" ? `- ${occurrence.item.repeat}` : ""}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button className="icon-button" onClick={() => onEdit(occurrence.item)} type="button">
+          <Edit3 size={16} />
+        </button>
+        <button className="icon-button" onClick={() => onDelete(occurrence.item.id)} type="button">
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ItemForm({
+  editing,
+  form,
+  onChange,
+  onClose,
+  onSave
+}: {
+  editing: boolean;
+  form: typeof blankItem;
+  onChange: (value: typeof blankItem) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-20 grid place-items-end bg-slate-950/50 sm:place-items-center">
+      <div className="max-h-[92vh] w-full overflow-auto rounded-t-2xl bg-white p-5 shadow-2xl dark:bg-slate-900 sm:max-w-2xl sm:rounded-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold">{editing ? "Edit reminder" : "Add reminder"}</h2>
+          <button className="icon-button" onClick={onClose} type="button">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="Title"
+            onChange={(title) => onChange({ ...form, title })}
+            placeholder="What do you need to remember?"
+            value={form.title}
+          />
+          <SelectField
+            label="Category"
+            onChange={(category) => onChange({ ...form, category })}
+            options={categories.map((category) => ({ label: category, value: category }))}
+            value={form.category}
+          />
+          <TextField
+            label="Date"
+            onChange={(date) => onChange({ ...form, date })}
+            type="date"
+            value={form.date}
+          />
+          <SelectField
+            label="Repeat"
+            onChange={(repeat) => onChange({ ...form, repeat: repeat as RepeatOption })}
+            options={repeatOptions}
+            value={form.repeat}
+          />
+          <TextField
+            label="Start time"
+            onChange={(startTime) => onChange({ ...form, startTime })}
+            type="time"
+            value={form.startTime}
+          />
+          <TextField
+            label="End time"
+            onChange={(endTime) => onChange({ ...form, endTime })}
+            type="time"
+            value={form.endTime}
+          />
+          <TextField
+            label="Location"
+            onChange={(location) => onChange({ ...form, location })}
+            placeholder="Optional"
+            value={form.location}
+          />
+          <SelectField
+            label="Remind me"
+            onChange={(reminderTime) =>
+              onChange({ ...form, reminderTime: reminderTime as ReminderOption })
+            }
+            options={reminderOptions.map((option) => ({
+              label: option.label,
+              value: option.value
+            }))}
+            value={form.reminderTime}
+          />
+          <label className="grid gap-1 text-sm font-bold text-slate-700 dark:text-slate-200 sm:col-span-2">
+            Notes
+            <textarea
+              className="min-h-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              onChange={(event) => onChange({ ...form, notes: event.target.value })}
+              placeholder="Add any helpful details"
+              value={form.notes}
+            />
+          </label>
+        </div>
+        <div className="mt-5 grid gap-2 sm:grid-cols-2">
+          <button className="secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="primary-button" onClick={onSave} type="button">
+            <Check size={18} />
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TextField({
   label,
   onChange,
   placeholder,
@@ -584,10 +1413,10 @@ function TextInput({
   value: string;
 }) {
   return (
-    <label className="grid gap-1 text-sm font-medium text-slate-600">
+    <label className="grid gap-1 text-sm font-bold text-slate-700 dark:text-slate-200">
       {label}
       <input
-        className="h-11 rounded-md border border-slate-300 bg-white px-3 text-slate-900"
+        className="h-12 rounded-lg border border-slate-300 bg-white px-3 text-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         type={type}
@@ -597,24 +1426,53 @@ function TextInput({
   );
 }
 
-function IconButton({
-  children,
+function SelectField({
   label,
-  onClick
+  onChange,
+  options,
+  value
 }: {
-  children: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  value: string;
 }) {
   return (
-    <button
-      aria-label={label}
-      className="inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-slate-300 px-3 text-slate-600 transition hover:bg-slate-50"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
+    <label className="grid gap-1 text-sm font-bold text-slate-700 dark:text-slate-200">
+      {label}
+      <select
+        className="h-12 rounded-lg border border-slate-300 bg-white px-3 text-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function EmptyState({
+  action,
+  message,
+  onAction
+}: {
+  action?: string;
+  message: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center dark:border-slate-700">
+      <p className="font-medium text-slate-600 dark:text-slate-300">{message}</p>
+      {action && onAction && (
+        <button className="primary-button mx-auto mt-4" onClick={onAction} type="button">
+          <Plus size={18} />
+          {action}
+        </button>
+      )}
+    </div>
   );
 }
